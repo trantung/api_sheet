@@ -76,7 +76,6 @@ class SiteController extends Controller
     public function productDetail(Request $request)
     {
         $origin = request()->header('Origin');
-        $domain = 'domain2f.microgem.io.vn';
         if ($origin) {
             $parsed = parse_url($origin);
             $domain = $parsed['host'] ?? null;
