@@ -44,14 +44,15 @@ class SiteService
             return false;
         }
         $siteData = $site->toArray();
+        $siteType = $site->type ?? 1; // Default to 1 (Blog) if not set
         $connectionName = $this->setupTenantConnection($site->db_name);
         $siteConfigs = $this->getConfigSite($connectionName, $siteData);
         $siteInformation =  $this->getSiteInformation($connectionName, $siteData);
-        $header = $this->getHeader($connectionName);
+        $header = $this->getHeader($connectionName, $siteType);
         $data = [
             'site_informations' => $siteInformation,
             'configs' => $siteConfigs,
-            'categories' => $this->getProductsGroupedByCategory($connectionName),
+            'categories' => $this->getProductsGroupedByCategory($connectionName, $siteType),
             'header' => $header
         ];
         return $data;
@@ -73,10 +74,24 @@ class SiteService
         return $res;
     }
 
-    public function getPages($connectionName)
+    public function getPages($connectionName, $siteType)
     {
         $res = [];
-        $pages = DB::connection($connectionName)->table('pages')->where('show_in_header', 1)->get();
+        $query = DB::connection($connectionName)->table('pages');
+
+        // Site Type 1 = Blog, 2 = Ecommerce
+        if ($siteType == 1) {
+            // Blog logic: filter by show_in_header
+            if (Schema::connection($connectionName)->hasColumn('pages', 'show_in_header')) {
+                $query->where('show_in_header', 1);
+            }
+        } else {
+            // Ecommerce logic: no show_in_header column, get all pages or default filter
+            // Assuming we just want all pages for now or filter by another logic if needed
+        }
+        
+        $pages = $query->get();
+        
         foreach($pages as $value)
         {
             $res[] = [
@@ -84,53 +99,85 @@ class SiteService
                 'title' => $value->title,
                 'content' => $value->content,
                 'page_address' => $value->page_address,
-                'page_width' => $value->page_width,
-                'menu_title' => $value->menu_title,
+                'page_width' => $value->page_width ?? null,
+                'menu_title' => $value->menu_title ?? null,
                 'menu_type' => $value->menu_type,
                 'target' => $value->target,
-                'meta_title' => $value->meta_title,
-                'meta_description' => $value->meta_description,
-                'image_share_url' => $value->content,
+                'meta_title' => $value->meta_title ?? null,
+                'meta_description' => $value->meta_description ?? null,
+                'image_share_url' => $value->image_share_url ?? ($value->content ?? null),
                 'show_in_search' => $value->show_in_search,
-                'show_in_header' => $value->show_in_header,
+                'show_in_header' => isset($value->show_in_header) ? $value->show_in_header : 1,
             ];
         }
         return $res;
     }
 
-    public function getHeader($connectionName)
+    public function getHeader($connectionName, $siteType)
     {
         $res = [
             'nar_bars' => $this->getNavBars($connectionName),
-            'pages' => $this->getPages($connectionName),
+            'pages' => $this->getPages($connectionName, $siteType),
         ];
         return $res;
     }
 
-    public function getProductsGroupedByCategory($connectionName)
+    public function getProductsGroupedByCategory($connectionName, $siteType)
     {
-        $results = DB::connection($connectionName)->select("
-            SELECT
-                c.id AS category_id,
-                c.name AS category_name,
-                p.id AS product_id,
-                p.title,
-                p.slug,
-                p.excerpt,
-                p.thumbnail,
-                p.author,
-                p.content,
-                p.published_date,
-                p.status,
-                cr.id AS relate_category_id,
-                cr.name AS relate_category_name
-            FROM categories c
-            JOIN product_category pc1 ON c.id = pc1.category_id
-            JOIN products p ON pc1.product_id = p.id
-            JOIN product_category pc2 ON p.id = pc2.product_id
-            JOIN categories cr ON pc2.category_id = cr.id
-            ORDER BY c.id, p.id
-        ");
+        if ($siteType == 1) {
+            // Schema cho BLOG
+            $results = DB::connection($connectionName)->select("
+                SELECT
+                    c.id AS category_id,
+                    c.name AS category_name,
+                    p.id AS product_id,
+                    p.title,
+                    p.slug,
+                    p.excerpt,
+                    p.thumbnail,
+                    p.author,
+                    p.content,
+                    p.published_date,
+                    p.status,
+                    cr.id AS relate_category_id,
+                    cr.name AS relate_category_name
+                FROM categories c
+                JOIN product_category pc1 ON c.id = pc1.category_id
+                JOIN products p ON pc1.product_id = p.id
+                JOIN product_category pc2 ON p.id = pc2.product_id
+                JOIN categories cr ON pc2.category_id = cr.id
+                ORDER BY c.id, p.id
+            ");
+        } else {
+            // Schema cho ECOMMERCE - format giống blog + thêm price, best_selling, new_arrival
+            $results = DB::connection($connectionName)->select("
+                SELECT
+                    c.id AS category_id,
+                    c.name AS category_name,
+                    p.id AS product_id,
+                    p.name AS title,
+                    p.sku AS slug,
+                    p.description AS excerpt,
+                    p.images AS thumbnail,
+                    '' AS author,
+                    p.link AS content,
+                    p.created_at AS published_date,
+                    'Published' AS status,
+                    p.price,
+                    p.old_price,
+                    p.best_selling,
+                    p.new_arrival,
+                    cr.id AS relate_category_id,
+                    cr.name AS relate_category_name
+                FROM categories c
+                JOIN product_category pc1 ON c.id = pc1.category_id
+                JOIN products p ON pc1.product_id = p.id
+                JOIN product_category pc2 ON p.id = pc2.product_id
+                JOIN categories cr ON pc2.category_id = cr.id
+                ORDER BY c.id, p.id
+            ");
+        }
+        
         $data = [];
         foreach ($results as $row) {
             $catId = $row->category_id;
@@ -143,17 +190,49 @@ class SiteService
                 ];
             }
             if (!isset($data[$catId]['products'][$productId])) {
-                $data[$catId]['products'][$productId] = [
-                    'title' => $row->title,
-                    'slug' => $row->slug,
-                    'excerpt' => $row->excerpt,
-                    'thumbnail' => $row->thumbnail,
-                    'author' => $row->author,
-                    'content' => $row->content,
-                    'published_date' => $row->published_date,
-                    'status' => $row->status,
-                    'categories_relate' => []
-                ];
+                if ($siteType == 1) {
+                    // Blog format
+                    $thumbnail = $row->thumbnail;
+                    $data[$catId]['products'][$productId] = [
+                        'title' => $row->title,
+                        'slug' => $row->slug,
+                        'excerpt' => $row->excerpt,
+                        'thumbnail' => $thumbnail ?? '',
+                        'author' => $row->author ?? '',
+                        'content' => $row->content,
+                        'published_date' => $row->published_date,
+                        'status' => $row->status,
+                        'categories_relate' => []
+                    ];
+                } else {
+                    // Ecommerce format - giống blog + thêm price, best_selling, new_arrival
+                    $thumbnail = $row->thumbnail;
+                    // Nếu thumbnail là json images, lấy ảnh đầu tiên
+                    if (!empty($thumbnail)) {
+                        $decodedImages = json_decode($thumbnail, true);
+                        if (is_array($decodedImages) && count($decodedImages) > 0) {
+                            $thumbnail = $decodedImages[0];
+                        }
+                    } else {
+                        $thumbnail = '';
+                    }
+                    
+                    $data[$catId]['products'][$productId] = [
+                        'title' => $row->title,
+                        'slug' => $row->slug,
+                        'excerpt' => $row->excerpt,
+                        'thumbnail' => $thumbnail,
+                        'author' => $row->author ?? '',
+                        'content' => $row->content,
+                        'published_date' => $row->published_date,
+                        'status' => $row->status,
+                        'price' => $row->price,
+                        'old_price' => $row->old_price ?? null,
+                        'best_selling' => $row->best_selling ?? 1,
+                        'new_arrival' => $row->new_arrival ?? 1,
+                        'categories_relate' => []
+                    ];
+                }
             }
             $relateId = $row->relate_category_id;
             $relateName = $row->relate_category_name;
@@ -233,7 +312,7 @@ class SiteService
         return $res;
     }
     
-    public function commonQuerySearchProduct($connectionName, $dataRequest, $arrayFieldSearch = null)
+    public function commonQuerySearchProduct($connectionName, $dataRequest, $arrayFieldSearch = null, $siteType = 1)
     {
         $keyword = $dataRequest['keyword'] ?? null;
         $slug = $dataRequest['slug'] ?? null;
@@ -248,10 +327,22 @@ class SiteService
             );
         
         if (!empty($keyword)) {
-            $query->where('products.title', 'like', '%' . $keyword . '%');
+            if ($siteType == 1) {
+                // Blog: search by title
+                $query->where('products.title', 'like', '%' . $keyword . '%');
+            } else {
+                // Ecommerce: search by name
+                $query->where('products.name', 'like', '%' . $keyword . '%');
+            }
         }
         if (!empty($slug)) {
-            $query->where('products.slug', $slug);
+            if ($siteType == 1) {
+                // Blog: search by slug
+                $query->where('products.slug', $slug);
+            } else {
+                // Ecommerce: search by sku (slug is mapped from sku)
+                $query->where('products.sku', $slug);
+            }
         }
         if($arrayFieldSearch) {
             foreach($arrayFieldSearch as $key => $value)
@@ -263,24 +354,62 @@ class SiteService
         return $rawData;
     }
     
-    public function formatDataProduct($rawData)
+    public function formatDataProduct($rawData, $siteType = 1)
     {
         $products = [];
         foreach ($rawData as $item) {
             $productId = $item->id;
             if (!isset($products[$productId])) {
-                $products[$productId] = [
-                    'id' => $item->id,
-                    'title' => $item->title,
-                    'slug' => $item->slug,
-                    'excerpt' => $item->excerpt,
-                    'thumbnail' => $item->thumbnail,
-                    'author' => $item->author,
-                    'content' => $item->content,
-                    'published_date' => $item->published_date,
-                    'status' => $item->status,
-                    'category_relate' => [],
-                ];
+                if ($siteType == 1) {
+                    // Blog format
+                    $products[$productId] = [
+                        'id' => $item->id,
+                        'title' => $item->title,
+                        'slug' => $item->slug,
+                        'excerpt' => $item->excerpt,
+                        'thumbnail' => $item->thumbnail,
+                        'author' => $item->author,
+                        'content' => $item->content,
+                        'published_date' => $item->published_date,
+                        'status' => $item->status,
+                        'category_relate' => [],
+                    ];
+                } else {
+                    // Ecommerce format
+                    $thumbnail = $item->images ?? '';
+                    // If thumbnail is json images, get first image
+                    if (!empty($thumbnail)) {
+                        $decodedImages = json_decode($thumbnail, true);
+                        if (is_array($decodedImages) && count($decodedImages) > 0) {
+                            $thumbnail = $decodedImages[0];
+                        }
+                    } else {
+                        $thumbnail = '';
+                    }
+                    
+                    $products[$productId] = [
+                        'id' => $item->id,
+                        'title' => $item->name ?? '',
+                        'slug' => $item->sku ?? '',
+                        'excerpt' => $item->description ?? '',
+                        'thumbnail' => $thumbnail,
+                        'author' => '',
+                        'content' => $item->link ?? '',
+                        'published_date' => $item->created_at ?? '',
+                        'status' => 'Published',
+                        'price' => $item->price ?? '',
+                        'old_price' => $item->old_price ?? null,
+                        'best_selling' => $item->best_selling ?? 1,
+                        'new_arrival' => $item->new_arrival ?? 1,
+                        'inventory' => $item->inventory ?? 0,
+                        'size' => $item->size ?? '',
+                        'color' => $item->color ?? '',
+                        'material' => $item->material ?? '',
+                        'rating' => $item->rating ?? '',
+                        'images' => $item->images ?? '',
+                        'category_relate' => [],
+                    ];
+                }
             }
             if ($item->category_id) {
                 $products[$productId]['category_relate'][] = [
@@ -301,13 +430,14 @@ class SiteService
             return false;
         }
         $siteData = $site->toArray();
+        $siteType = $site->type ?? 1; // Default to 1 (Blog) if not set
         $connectionName = $this->setupTenantConnection($site->db_name);
-        $rawData = $this->commonQuerySearchProduct($connectionName, $dataRequest);
-        $data = $this->formatDataProduct($rawData);
+        $rawData = $this->commonQuerySearchProduct($connectionName, $dataRequest, null, $siteType);
+        $data = $this->formatDataProduct($rawData, $siteType);
         return $data;
     }
 
-    public function getRelatedProductsFromTenant($productId, $connectionName, $limit = 6)
+    public function getRelatedProductsFromTenant($productId, $connectionName, $limit = 6, $siteType = 1)
     {
         $categoryIds = DB::connection($connectionName)
             ->table('product_category')
@@ -355,18 +485,50 @@ class SiteService
                 ];
             }
             
-            $related[] = [
-                'id' => $item->id,
-                'title' => $item->title,
-                'slug' => $item->slug,
-                'excerpt' => $item->excerpt,
-                'thumbnail' => $item->thumbnail,
-                'author' => $item->author,
-                'content' => $item->content,
-                'published_date' => $item->published_date,
-                'status' => $item->status,
-                'category_relate' => $categoriesFormat
-            ];
+            if ($siteType == 1) {
+                // Blog format
+                $related[] = [
+                    'id' => $item->id,
+                    'title' => $item->title,
+                    'slug' => $item->slug,
+                    'excerpt' => $item->excerpt,
+                    'thumbnail' => $item->thumbnail,
+                    'author' => $item->author,
+                    'content' => $item->content,
+                    'published_date' => $item->published_date,
+                    'status' => $item->status,
+                    'category_relate' => $categoriesFormat
+                ];
+            } else {
+                // Ecommerce format
+                $thumbnail = $item->images ?? '';
+                // If thumbnail is json images, get first image
+                if (!empty($thumbnail)) {
+                    $decodedImages = json_decode($thumbnail, true);
+                    if (is_array($decodedImages) && count($decodedImages) > 0) {
+                        $thumbnail = $decodedImages[0];
+                    }
+                } else {
+                    $thumbnail = '';
+                }
+                
+                $related[] = [
+                    'id' => $item->id,
+                    'title' => $item->name ?? '',
+                    'slug' => $item->sku ?? '',
+                    'excerpt' => $item->description ?? '',
+                    'thumbnail' => $thumbnail,
+                    'author' => '',
+                    'content' => $item->link ?? '',
+                    'published_date' => $item->created_at ?? '',
+                    'status' => 'Published',
+                    'price' => $item->price ?? '',
+                    'old_price' => $item->old_price ?? null,
+                    'best_selling' => $item->best_selling ?? 1,
+                    'new_arrival' => $item->new_arrival ?? 1,
+                    'category_relate' => $categoriesFormat
+                ];
+            }
         }
 
         return $related;
@@ -379,14 +541,15 @@ class SiteService
             return false;
         }
         $siteData = $site->toArray();
+        $siteType = $site->type ?? 1; // Default to 1 (Blog) if not set
         $connectionName = $this->setupTenantConnection($site->db_name);
-        $rawData = $this->commonQuerySearchProduct($connectionName, $dataRequest);
-        $data = $this->formatDataProduct($rawData);
+        $rawData = $this->commonQuerySearchProduct($connectionName, $dataRequest, null, $siteType);
+        $data = $this->formatDataProduct($rawData, $siteType);
         $result = $data[0];
         $siteInformation =  $this->getSiteInformation($connectionName, $siteData);
         return [
             'detail' => $data,
-            'product_relate' => $this->getRelatedProductsFromTenant($result['id'], $connectionName, 6),
+            'product_relate' => $this->getRelatedProductsFromTenant($result['id'], $connectionName, 6, $siteType),
             'site_informations' => $siteInformation,
         ];
     }
