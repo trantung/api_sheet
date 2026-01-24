@@ -288,19 +288,26 @@ class SiteService
         $res['text_center'] = 2; // Text center
         $res['small_hero'] = 1; // Font size
         $res['grid_content'] = 2; // Grid content
-        $res['pagination_size'] = 3; // Pagination Size
+        $res['pagination_size'] = 10; // Pagination Size
         $res['font_family'] = "Poppins"; // Font Family
         $res['published'] = 1; // Publish website
+        $res['build_on'] = 1;
+        $res['disable_detail_page'] = 2;
+        $res['disable_toc'] = 2;
+        $res['disable_index'] = 2;
+        $res['disable_banner'] = 2;
+
         $check = DB::connection($connectionName)->table('configs')->first();
         if($check)
         {
+            $res['name'] = $check->site_name;
             $res['dark_mode'] = $check->dark_mode; // Show dark mode
             $res['hide_header'] = $check->header_is_show; // Hide header
             $res['hide_footer'] = $check->footer_is_show; // Hide footer
             $res['disable_hero'] = $check->hero_section_is_show; // Hide hero
             $res['collect_email'] = $check->email_subscribed; // Show collected emails
             $res['about_us'] = $check->about_us_is_show; // Show the About Us page
-            $res['disable_auto_sync'] = $check->disable_auto_sync; // Disable auto-sync
+            $res['disable_auto_sync'] = $check->disable_auto_sync ?? 2; // Disable auto-sync
             $res['feedback_form'] = $check->feedback_is_show; // Show feedback form
             $res['text_center'] = $check->text_center; // Text center
             $res['small_hero'] = $check->font_size; // Font size
@@ -308,7 +315,18 @@ class SiteService
             $res['pagination_size'] = $check->paginate; // Pagination Size
             $res['font_family'] = $check->font_family; // Font Family
             $res['published'] = $check->site_publish; // Publish website
+            $res['build_on'] = $check->remove_icon_build_on;
+            $res['disable_detail_page'] = $check->disable_detail_page ?? 2;
+            $res['disable_toc'] = $check->disable_toc ?? 2;
+            $res['disable_index'] = $check->disable_index ?? 2;
+            $res['disable_banner'] = $check->disable_banner ?? 2;
         }
+
+        $siteType = $siteData['type'] ?? 1;
+        if ($siteType == 2) { // Ecommerce
+            unset($res['grid_content']);
+        }
+
         return $res;
     }
     
@@ -316,6 +334,9 @@ class SiteService
     {
         $keyword = $dataRequest['keyword'] ?? null;
         $slug = $dataRequest['slug'] ?? null;
+        $categoryId = $dataRequest['category_id'] ?? null;
+        $orderBy = $dataRequest['order_by'] ?? null; // price_asc, price_desc, name_asc, name_desc
+
         $query = DB::connection($connectionName)
             ->table('products')
             ->leftJoin('product_category', 'products.id', '=', 'product_category.product_id')
@@ -335,6 +356,11 @@ class SiteService
                 $query->where('products.name', 'like', '%' . $keyword . '%');
             }
         }
+
+        if (!empty($categoryId)) {
+            $query->where('categories.id', $categoryId);
+        }
+
         if (!empty($slug)) {
             if ($siteType == 1) {
                 // Blog: search by slug
@@ -344,12 +370,36 @@ class SiteService
                 $query->where('products.sku', $slug);
             }
         }
+
         if($arrayFieldSearch) {
             foreach($arrayFieldSearch as $key => $value)
             {
                  $query->where('products.' . $key, $value);
             }
         }
+
+        if (!empty($orderBy)) {
+            switch ($orderBy) {
+                case 'price_asc':
+                    $query->orderByRaw('CAST(products.price AS DECIMAL(10,2)) ASC');
+                    break;
+                case 'price_desc':
+                    $query->orderByRaw('CAST(products.price AS DECIMAL(10,2)) DESC');
+                    break;
+                case 'name_asc':
+                    $query->orderBy($siteType == 1 ? 'products.title' : 'products.name', 'ASC');
+                    break;
+                case 'name_desc':
+                    $query->orderBy($siteType == 1 ? 'products.title' : 'products.name', 'DESC');
+                    break;
+                default:
+                    $query->orderBy('products.id', 'DESC');
+                    break;
+            }
+        } else {
+            $query->orderBy('products.id', 'DESC');
+        }
+
         $rawData = $query->get();
         return $rawData;
     }
@@ -426,7 +476,7 @@ class SiteService
     public function getProductSearch($domain, $dataRequest)
     {
         $site = Site::where('domain_name', $domain)->first();
-        if(!$site || !isset($dataRequest['keyword'])) {
+        if(!$site) {
             return false;
         }
         $siteData = $site->toArray();

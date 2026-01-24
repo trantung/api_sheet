@@ -11,6 +11,7 @@ use App\Http\Controllers\SiteController;
 use App\Http\Controllers\ApiTestController;
 use App\Http\Controllers\PageController;
 use App\Http\Controllers\NavbarController;
+use App\Http\Controllers\EmailController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\CartController;
 use App\Http\Middleware\CartTokenMiddleware;
@@ -29,6 +30,9 @@ Route::post('/site/index', [SiteController::class, 'index'])->name('api.site.ind
 Route::post('/product/search', [SiteController::class, 'productSearch'])->name('api.search');
 Route::post('/product/detail', [SiteController::class, 'productDetail'])->name('api.productDetail');
 Route::post('/pages/detail', [SiteController::class, 'pageDetail'])->name('api.pageDetail');
+
+// Email subscribe/feedback
+Route::post('/web/web-email', [EmailController::class, 'store'])->name('api.web.email');
 
 // Cart routes - Guest cart với cart_token
 Route::middleware([CartTokenMiddleware::class])->group(function () {
