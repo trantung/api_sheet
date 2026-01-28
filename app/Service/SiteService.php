@@ -287,7 +287,7 @@ class SiteService
         $res['feedback_form'] = 2; // Show feedback form
         $res['text_center'] = 2; // Text center
         $res['small_hero'] = 1; // Font size
-        $res['grid_content'] = 2; // Grid content
+        $res['grid_content'] = 3; // Grid content
         $res['pagination_size'] = 10; // Pagination Size
         $res['font_family'] = "Poppins"; // Font Family
         $res['published'] = 1; // Publish website
